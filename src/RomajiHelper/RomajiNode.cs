@@ -14,11 +14,7 @@ public sealed class RomajiNode
     {
         var nodes = ParseAt(input, 0);
 
-        return new RomajiNode
-        {
-            Character = default,
-            Nodes = nodes,
-        };
+        return new RomajiNode { Character = default, Nodes = nodes };
     }
 
     public bool IsRoot => Character == default;
@@ -33,23 +29,29 @@ public sealed class RomajiNode
         {
             Debug.Assert(patterns.Length <= 3);
 
-            if (patterns.Length > 0) this.field0 = patterns[0];
-            if (patterns.Length > 1) this.field1 = patterns[1];
-            if (patterns.Length > 2) this.field2 = patterns[2];
+            if (patterns.Length > 0)
+                this.field0 = patterns[0];
+            if (patterns.Length > 1)
+                this.field1 = patterns[1];
+            if (patterns.Length > 2)
+                this.field2 = patterns[2];
         }
 
         public ReadOnlySpan<string> AsSpan()
         {
-            if (field0 is null) return [];
-            if (field1 is null) return MemoryMarshal.CreateReadOnlySpan(ref field0, 1);
-            if (field2 is null) return MemoryMarshal.CreateReadOnlySpan(ref field0, 2);
+            if (field0 is null)
+                return [];
+            if (field1 is null)
+                return MemoryMarshal.CreateReadOnlySpan(ref field0, 1);
+            if (field2 is null)
+                return MemoryMarshal.CreateReadOnlySpan(ref field0, 2);
             return MemoryMarshal.CreateReadOnlySpan(ref field0, 3);
         }
 
         public int Length => AsSpan().Length;
     }
 
-    static bool TryGetRomanization(ReadOnlySpan<char> kana, out Romanization romanization)
+    static bool TryGetRomanization(scoped ReadOnlySpan<char> kana, out Romanization romanization)
     {
         ReadOnlySpan<string> result = kana switch
         {
@@ -79,8 +81,8 @@ public sealed class RomajiNode
             "ぜ" or "ゼ" => ["ze"],
             "ぞ" or "ゾ" => ["zo"],
             "た" or "タ" => ["ta"],
-            "ち" or "チ" => ["ti", "chi",],
-            "つ" or "ツ" => ["tu", "tsu",],
+            "ち" or "チ" => ["ti", "chi"],
+            "つ" or "ツ" => ["tu", "tsu"],
             "て" or "テ" => ["te"],
             "と" or "ト" => ["to"],
             "だ" or "ダ" => ["da"],
@@ -209,6 +211,7 @@ public sealed class RomajiNode
 
     internal static RomajiNode[] ParseAt(ReadOnlySpan<char> input, int index)
     {
+        index = SkipWhiteSpaces(input, index);
         if (index == input.Length)
         {
             return [];
@@ -227,20 +230,15 @@ public sealed class RomajiNode
         var nodes = new PooledList<RomajiNode>(2);
         try
         {
-            foreach (var length in new[] { 2, 1 })
+            ReadOnlySpan<int> lengths = [2, 1];
+            foreach (var length in lengths)
             {
-                if (index + length > input.Length)
+                if (!TryGetRomanization(input, index, length, out var patterns, out var nextIndex))
                 {
                     continue;
                 }
 
-                var kana = input.Slice(index, length);
-                if (!TryGetRomanization(kana, out var patterns))
-                {
-                    continue;
-                }
-
-                var tail = ParseAt(input, index + length);
+                var tail = ParseAt(input, nextIndex);
                 foreach (var pattern in patterns.AsSpan())
                 {
                     Add(ref nodes, tail, pattern);
@@ -258,6 +256,37 @@ public sealed class RomajiNode
         {
             nodes.Dispose();
         }
+    }
+
+    static bool TryGetRomanization(
+        ReadOnlySpan<char> input,
+        int index,
+        int length,
+        out Romanization romanization,
+        out int nextIndex
+    )
+    {
+        Span<char> kana = stackalloc char[2];
+        var count = 0;
+        while (index < input.Length && count < length)
+        {
+            var c = input[index++];
+            if (IsWhiteSpace(c))
+            {
+                continue;
+            }
+
+            kana[count++] = c;
+        }
+
+        nextIndex = index;
+        if (count != length)
+        {
+            romanization = default;
+            return false;
+        }
+
+        return TryGetRomanization(kana[..count], out romanization);
     }
 
     static RomajiNode[] ParseN(ReadOnlySpan<char> input, int index)
@@ -306,7 +335,12 @@ public sealed class RomajiNode
 
     static bool CanUseSingleN(ReadOnlySpan<char> input, int index, RomajiNode[] singleNTail)
     {
-        if (singleNTail.Length == 0 || index + 1 >= input.Length || input[index + 1] is 'ん' or 'ン')
+        var nextIndex = SkipWhiteSpaces(input, index + 1);
+        if (
+            singleNTail.Length == 0
+            || nextIndex >= input.Length
+            || input[nextIndex] is 'ん' or 'ン'
+        )
         {
             return false;
         }
@@ -314,12 +348,7 @@ public sealed class RomajiNode
         ReadOnlySpan<int> l = [2, 1];
         foreach (var length in l)
         {
-            if (index + 1 + length > input.Length)
-            {
-                continue;
-            }
-
-            if (!TryGetRomanization(input.Slice(index + 1, length), out var romanization))
+            if (!TryGetRomanization(input, nextIndex, length, out var romanization, out _))
             {
                 continue;
             }
@@ -348,11 +377,7 @@ public sealed class RomajiNode
             {
                 if (IsConsonant(node.Character) && node.Character != 'n')
                 {
-                    nodes.Add(new RomajiNode
-                    {
-                        Character = node.Character,
-                        Nodes = [node],
-                    });
+                    nodes.Add(new RomajiNode { Character = node.Character, Nodes = [node] });
                 }
             }
 
@@ -387,12 +412,14 @@ public sealed class RomajiNode
             ];
         }
 
-        nodes.Add(new RomajiNode
-        {
-            Character = text[0],
-            Nodes = next,
-            IsTerminal = next.Length == 0,
-        });
+        nodes.Add(
+            new RomajiNode
+            {
+                Character = text[0],
+                Nodes = next,
+                IsTerminal = next.Length == 0,
+            }
+        );
     }
 
     static RomajiNode[] Merge(RomajiNode[] nodes)
@@ -448,8 +475,23 @@ public sealed class RomajiNode
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool IsConsonant(char c) => c is >= 'a' and <= 'z' && !IsVowel(c);
 
-    static void ThrowInvalidCharacter(char c, int index)
-        => throw new ArgumentException($"Invalid character '{c}' at index {index}.");
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static int SkipWhiteSpaces(ReadOnlySpan<char> input, int index)
+    {
+        while (index < input.Length && IsWhiteSpace(input[index]))
+        {
+            index++;
+        }
+
+        return index;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static bool IsWhiteSpace(char c) =>
+        c is ' ' or '\t' or '\n' or '\r' or '\f' or '\v' || (c > ' ' && char.IsWhiteSpace(c));
+
+    static void ThrowInvalidCharacter(char c, int index) =>
+        throw new ArgumentException($"Invalid character '{c}' at index {index}.");
 
     public IEnumerable<string> Patterns()
     {
